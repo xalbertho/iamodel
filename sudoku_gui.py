@@ -98,6 +98,9 @@ class Game:
         self.hints    = 0
         self.won      = False
         self.invalid  = set()
+        self.ai_solving  = False
+        self.ai_queue    = []
+        self.ai_last_ms  = 0
 
     def select(self, row, col):
         self.selected = (row, col)
@@ -131,6 +134,55 @@ class Game:
         self.board = copy.deepcopy(self.solution)
         self.invalid.clear()
         self.won = True
+
+    def ai_solve_start(self):
+        """Pre-compute move sequence using iterative greedy inference (most confident cell first)."""
+        if self.won or self.ai_solving:
+            return
+        import os
+        import torch
+        from sudoku_model import SudokuNet
+        if not os.path.exists("model.pth"):
+            return
+        model = SudokuNet(channels=128, n_blocks=4)
+        model.load_state_dict(torch.load("model.pth", map_location="cpu", weights_only=True))
+        model.eval()
+
+        board = [row[:] for row in self.board]
+        moves = []
+        for _ in range(81):
+            empties = [(r, c) for r in range(9) for c in range(9) if board[r][c] == 0]
+            if not empties:
+                break
+            inp = torch.tensor([[board[r][c] for r in range(9) for c in range(9)]], dtype=torch.long)
+            with torch.no_grad():
+                logits = model(inp)[0]  # (81, 9)
+            best_conf, best_r, best_c, best_digit = -1e9, None, None, None
+            for r, c in empties:
+                cell = logits[r * 9 + c]
+                conf = cell.max().item()
+                if conf > best_conf:
+                    best_conf = conf
+                    best_r, best_c = r, c
+                    best_digit = cell.argmax().item() + 1
+            board[best_r][best_c] = best_digit
+            moves.append((best_r, best_c, best_digit))
+
+        self.ai_queue   = moves
+        self.ai_solving = True
+
+    def ai_step(self):
+        """Place the next queued move."""
+        if not self.ai_queue:
+            self.ai_solving = False
+            self._check_invalid()
+            if is_complete(self.board) and not self.invalid:
+                self.won = True
+            return
+        r, c, digit = self.ai_queue.pop(0)
+        if self.board[r][c] == 0:
+            self.board[r][c] = digit
+            self.selected = (r, c)
 
     def _check_invalid(self):
         self.invalid.clear()
@@ -175,10 +227,12 @@ def main():
     difficulty = "medium"
     game = Game(difficulty)
 
-    btn_w, btn_h = 140, 38
-    btn_new   = pygame.Rect(W//2 - 220, H - 100, btn_w, btn_h)
-    btn_hint  = pygame.Rect(W//2 - 70,  H - 100, btn_w, btn_h)
-    btn_solve = pygame.Rect(W//2 + 80,  H - 100, btn_w, btn_h)
+    btn_w, btn_h = 128, 38
+    btn_x0 = (W - 4 * btn_w - 3 * 10) // 2
+    btn_new   = pygame.Rect(btn_x0,               H - 100, btn_w, btn_h)
+    btn_hint  = pygame.Rect(btn_x0 + 138,         H - 100, btn_w, btn_h)
+    btn_solve = pygame.Rect(btn_x0 + 138 * 2,     H - 100, btn_w, btn_h)
+    btn_ai    = pygame.Rect(btn_x0 + 138 * 3,     H - 100, btn_w, btn_h)
 
     diff_btns = {
         "easy":   pygame.Rect(MARGIN,        H - 52, 110, 30),
@@ -203,6 +257,8 @@ def main():
                     game.hint()
                 elif btn_solve.collidepoint(event.pos):
                     game.auto_solve()
+                elif btn_ai.collidepoint(event.pos):
+                    game.ai_solve_start()
                 else:
                     for diff, rect in diff_btns.items():
                         if rect.collidepoint(event.pos):
@@ -223,6 +279,12 @@ def main():
                     elif event.key == pygame.K_LEFT:  game.selected = (r, max(0, c-1))
                     elif event.key == pygame.K_RIGHT: game.selected = (r, min(8, c+1))
 
+        # ── AI step ───────────────────────────────────────────────────────────
+        now = pygame.time.get_ticks()
+        if game.ai_solving and now - game.ai_last_ms >= 150:
+            game.ai_step()
+            game.ai_last_ms = now
+
         # ── draw ──────────────────────────────────────────────────────────────
         screen.fill(PANEL)
 
@@ -236,6 +298,9 @@ def main():
         draw_button(screen, fonts, btn_new,   "New Game",  GREEN,          btn_new.collidepoint(mx, my))
         draw_button(screen, fonts, btn_hint,  "  Hint  ",  BLUE,           btn_hint.collidepoint(mx, my))
         draw_button(screen, fonts, btn_solve, "  Solve  ", (150, 80, 180), btn_solve.collidepoint(mx, my))
+        ai_label = "Solving..." if game.ai_solving else " AI Solve"
+        ai_color = (220, 80, 20) if game.ai_solving else (190, 110, 30)
+        draw_button(screen, fonts, btn_ai, ai_label, ai_color, btn_ai.collidepoint(mx, my))
 
         diff_colors = {"easy": (80,170,90), "medium": (200,140,40), "hard": (190,60,60)}
         for diff, rect in diff_btns.items():
