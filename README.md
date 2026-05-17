@@ -1,43 +1,58 @@
-# iamodel — Sudoku en Python (CLI + GUI)
+# iamodel — Sudoku + modelo IA (Python)
 
-Proyecto de Sudoku hecho en Python con dos formas de juego:
+Proyecto en Python con dos partes principales:
 
-- **Modo consola (CLI)** en `sudoku.py`
-- **Modo gráfico (GUI)** con Pygame en `sudoku_gui.py`
+1) **Juego de Sudoku**
+- **Modo consola (CLI)**: `sudoku.py`
+- **Modo gráfico (GUI)** con Pygame: `sudoku_gui.py`
 
-Incluye generación de tableros completos, creación de puzzles por dificultad, validación de jugadas, pistas y resolución automática.
+2) **Modelo de IA (PyTorch) para predecir celdas faltantes**
+- Definición de la red: `sudoku_model.py`
+- Generación de dataset: `generate_dataset.py`
+- Entrenamiento: `train_model.py`
+
+Incluye generación de tableros completos, creación de puzzles por dificultad, validación de jugadas, pistas y resolución automática (en el juego), además del pipeline básico para entrenar un modelo que predice dígitos en celdas vacías.
 
 ## Características
 
+### Juego
+
 - Generación de tableros Sudoku válidos (9x9).
 - Creación de puzzles con solución única.
-- Dificultades disponibles:
-  - `easy`
-  - `medium`
-  - `hard`
+- Dificultades disponibles: `easy`, `medium`, `hard`.
 - Modo consola interactivo con comandos.
 - Interfaz gráfica con selección de celdas, ingreso por teclado, botones de ayuda y resolución.
 - Detección visual de celdas inválidas en la GUI.
 - Medición de tiempo de partida y conteo de pistas usadas.
 
+### IA / Entrenamiento
+
+- `SudokuNet`: red convolucional residual que recibe un tablero (0–9; 0 = vacío) y produce logits para dígitos 1–9 por celda.
+- Generación de dataset en `data/` como `puzzles.npy` y `solutions.npy`.
+- Script de entrenamiento con métricas de **accuracy solo en celdas vacías** (`empty_acc`) y guardado del mejor modelo.
+
 ## Estructura del repositorio
 
 ```text
 .
-├── sudoku.py          # Lógica principal + modo CLI
-├── sudoku_gui.py      # Interfaz gráfica con pygame
-├── requirements.txt   # Dependencias de Python
+├── sudoku.py             # Lógica principal + modo CLI
+├── sudoku_gui.py         # Interfaz gráfica con pygame
+├── sudoku_model.py       # Modelo IA (PyTorch)
+├── generate_dataset.py   # Generación de dataset (puzzles/soluciones)
+├── train_model.py        # Entrenamiento del modelo
+├── requirements.txt      # Dependencias de Python
 └── .gitignore
 ```
 
 ## Requisitos
 
 - Python 3.10+ recomendado
-- Dependencias de `requirements.txt`:
+- Dependencias:
   - `pygame-ce==2.5.7`
   - `tk==0.1.0`
+  - **PyTorch**, **NumPy** y **tqdm** (usados por `train_model.py` / `sudoku_model.py` / `generate_dataset.py`)
 
-> Nota: la GUI usa `pygame`.
+> Nota: La GUI usa `pygame`.
 
 ## Instalación
 
@@ -67,6 +82,12 @@ En Windows (PowerShell):
 pip install -r requirements.txt
 ```
 
+Si vas a entrenar el modelo, instala además (ejemplo):
+
+```bash
+pip install torch numpy tqdm
+```
+
 ## Uso
 
 ### 1) Ejecutar modo consola (CLI)
@@ -79,8 +100,8 @@ Al iniciar, podrás elegir dificultad (`easy`, `medium`, `hard`).
 
 #### Comandos en consola
 
-- `fila columna numero`  
-  Ejemplo: `3 5 7`
+- `fila columna numero`
+  - Ejemplo: `3 5 7`
 - `hint` → coloca una pista aleatoria.
 - `solve` → completa el tablero automáticamente.
 - `restart` → reinicia la partida actual.
@@ -107,7 +128,25 @@ python sudoku_gui.py
   - Flechas para mover selección.
   - `Esc` para deseleccionar.
 
-## Cómo funciona internamente
+### 3) Generar dataset para entrenamiento
+
+Genera `data/puzzles.npy` y `data/solutions.npy`:
+
+```bash
+python generate_dataset.py --n 20000 --out data
+```
+
+### 4) Entrenar el modelo
+
+Entrena usando los `.npy` en `data/` y guarda el mejor modelo en `model.pth`:
+
+```bash
+python train_model.py --data data --epochs 20 --batch 256 --lr 1e-3 --out model.pth
+```
+
+La métrica principal mostrada es `empty_acc` (accuracy calculada solo en celdas que estaban vacías en el puzzle).
+
+## Cómo funciona internamente (resumen)
 
 ### Generación de tablero completo
 
@@ -127,21 +166,12 @@ En `sudoku.py`:
   - medium: 35
   - hard: 25
 
-### Juego y validación
+### Modelo `SudokuNet`
 
-- `is_complete(board)` verifica si no quedan ceros.
-- `solve(board)` resuelve por backtracking.
-- En GUI, `Game._check_invalid()` marca celdas en conflicto para mostrar errores visualmente.
-
-## Personalización rápida
-
-Puedes ajustar dificultad editando `CLUES` en `sudoku.py`:
-
-```python
-CLUES = {"easy": 45, "medium": 35, "hard": 25}
-```
-
-Más pistas = puzzle más fácil.
+- Entrada: `(B, 81)` con valores `0-9` (0 = celda vacía)
+- One-hot a 10 canales y convolución 1x1 para embedding
+- Varios bloques residuales 3x3
+- Cabeza 1x1 para producir logits por dígito (1–9) en cada celda
 
 ## Solución de problemas
 
@@ -163,7 +193,7 @@ Más pistas = puzzle más fácil.
 
 ## Estado del proyecto
 
-Proyecto funcional para jugar Sudoku en consola y en GUI local.
+Proyecto funcional para jugar Sudoku (consola y GUI) y para entrenar un modelo base de IA que predice dígitos en celdas vacías.
 
 ## Contribuciones
 
